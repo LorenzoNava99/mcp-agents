@@ -84,12 +84,17 @@ ${agentList}
 
 Agent descriptions are provided by the **Task tool** from the same \`.claude/agents/\` directory. Both tools are available simultaneously - refer to Task tool's agent definitions for what each agent does. This avoids duplication and keeps descriptions in sync.
 
-## When to Use run_agent vs Task Tool
+## When to Use run_agent vs Task Tool vs run_agents_batch
 
 **Use run_agent (this tool) for:**
 - Custom agents defined in \`.claude/agents/\` directory
 - When you need session resumption with follow-up prompts
-- When you need to run multiple agents in parallel
+- Single agent tasks or sequential multi-agent workflows
+
+**Use run_agents_batch for:**
+- Running 2+ agents in TRUE PARALLEL (concurrent execution)
+- When total execution time matters (batch time = longest task, not sum)
+- Independent tasks that don't need to share context
 
 **Use Task tool for:**
 - Built-in agent types (general-purpose, Explore, Plan, statusline-setup, etc.)
@@ -99,7 +104,7 @@ Agent descriptions are provided by the **Task tool** from the same \`.claude/age
 ## Key Features
 
 - **Session resumption**: Continue agent conversations with follow-up prompts
-- **Parallel execution**: Multiple agents run concurrently when called together (each session is completely independent - one failure does not affect others)
+- **Session forking**: Branch from a checkpoint to explore alternatives
 - **Auto-compaction**: SDK handles context management for long-running tasks
 - **Model inheritance**: Agents always inherit the model from the parent Claude Code session (not configurable per-agent)
 
@@ -123,6 +128,8 @@ When multiple run_agent calls are made in a single message:
 - Results are returned independently for each call
 
 **Note:** Execution is currently sequential due to Claude Code's MCP request handling. True parallel execution depends on client-side support (MCP spec 2025-11 added parallel tool calls, pending Claude Code implementation).
+
+**⚡ For TRUE PARALLEL execution, use \`run_agents_batch\` instead** - it runs all tasks concurrently via Promise.all().
 
 ## Session Resumption Workflow
 
