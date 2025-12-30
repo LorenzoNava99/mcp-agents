@@ -85,6 +85,36 @@ run_agent(agent: "researcher", task: "Focus on token bucket algorithm", resume: 
 }
 ```
 
+### `run_agents_batch`
+
+**TRUE PARALLEL execution.** Runs multiple agents concurrently using Promise.all().
+
+```typescript
+run_agents_batch({
+  tasks: [
+    { id: "research", agent: "researcher", task: "Find API docs" },
+    { id: "analyze", agent: "analyzer", task: "Check patterns" },
+    { id: "test", agent: "tester", task: "Run tests" }
+  ]
+})
+```
+
+**Why use this?**
+- Multiple `run_agent` calls execute sequentially (Claude Code limitation)
+- `run_agents_batch` executes ALL tasks in parallel
+- Total time = longest task, not sum of all tasks
+
+**Returns:**
+```typescript
+{
+  all_success: boolean;
+  succeeded: number;
+  failed: number;
+  total_duration_ms: number;
+  results: BatchTaskResult[];  // Each with id, success, session_id, summary
+}
+```
+
 ### `get_agent_sessions`
 
 List resumable sessions for follow-up prompts.

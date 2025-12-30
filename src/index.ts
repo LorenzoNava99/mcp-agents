@@ -38,7 +38,10 @@ import {
   type RunAgentParams,
   type GetSessionsParams,
   type CancelAgentParams,
+  type RunAgentsBatchParams,
   type AgentResult,
+  type BatchResult,
+  type BatchTaskResult,
   AgentError,
   AgentErrorCode,
 } from './types.js';
@@ -220,6 +223,9 @@ Sessions persist even on failure - use the session_id for debugging or retry.`,
  * Build all MCP tools
  */
 function buildTools(): Tool[] {
+  const agents = registry.list();
+  const agentNames = agents.map((a) => a.name);
+
   return [
     buildRunAgentTool(),
     {
@@ -307,6 +313,79 @@ If session not found or already completed:
           },
         },
         required: ['session_id'],
+      },
+    },
+    {
+      name: 'run_agents_batch',
+      description: `Run multiple agents in TRUE PARALLEL. Use this when you need concurrent execution.
+
+**Why use this instead of multiple run_agent calls?**
+- Multiple run_agent calls execute SEQUENTIALLY (Claude Code limitation)
+- run_agents_batch executes ALL tasks in parallel using Promise.all()
+- Total time = longest single task, not sum of all tasks
+
+## Example
+
+\`\`\`json
+{
+  "tasks": [
+    { "id": "research", "agent": "researcher", "task": "Find API docs" },
+    { "id": "analyze", "agent": "analyzer", "task": "Check code patterns" },
+    { "id": "test", "agent": "tester", "task": "Run security tests" }
+  ]
+}
+\`\`\`
+
+## Returns
+
+\`\`\`json
+{
+  "all_success": true,
+  "succeeded": 3,
+  "failed": 0,
+  "total_duration_ms": 8500,
+  "results": [
+    { "id": "research", "success": true, "session_id": "...", "summary": "...", "duration_ms": 8500 },
+    { "id": "analyze", "success": true, "session_id": "...", "summary": "...", "duration_ms": 6200 },
+    { "id": "test", "success": true, "session_id": "...", "summary": "...", "duration_ms": 7100 }
+  ]
+}
+\`\`\`
+
+## Limits
+- Maximum 10 tasks per batch
+- Each task creates an independent session (resumable later)
+- One task failure doesn't affect others`,
+      inputSchema: {
+        type: 'object',
+        properties: {
+          tasks: {
+            type: 'array',
+            description: 'Array of agent tasks to run in parallel',
+            items: {
+              type: 'object',
+              properties: {
+                agent: {
+                  type: 'string',
+                  description: 'Agent name from .claude/agents/',
+                  ...(agentNames.length > 0 && { enum: agentNames }),
+                },
+                task: {
+                  type: 'string',
+                  description: 'Task prompt for the agent',
+                },
+                id: {
+                  type: 'string',
+                  description: 'Optional ID to identify this task in results',
+                },
+              },
+              required: ['agent', 'task'],
+            },
+            minItems: 1,
+            maxItems: 10,
+          },
+        },
+        required: ['tasks'],
       },
     },
   ];
@@ -433,6 +512,69 @@ async function runAgent(params: RunAgentParams): Promise<AgentResult> {
 }
 
 /**
+ * Run multiple agents in TRUE PARALLEL using Promise.all()
+ *
+ * This bypasses Claude Code's sequential MCP request handling by
+ * accepting all tasks in a single request and executing them concurrently.
+ */
+async function runAgentsBatch(params: RunAgentsBatchParams): Promise<BatchResult> {
+  const batchId = Math.random().toString(36).substring(7);
+  const batchStart = Date.now();
+
+  console.error(`[Batch:${batchId}] Starting ${params.tasks.length} agents in parallel`);
+
+  // Execute all agents in parallel
+  const taskPromises = params.tasks.map(async (task, index): Promise<BatchTaskResult> => {
+    const taskId = task.id || `task-${index}`;
+    const taskStart = Date.now();
+
+    try {
+      const result = await runAgent({
+        agent: task.agent,
+        task: task.task,
+      });
+
+      return {
+        id: taskId,
+        success: result.success,
+        session_id: result.session_id,
+        summary: result.summary,
+        artifacts: result.artifacts,
+        error: result.error,
+        duration_ms: Date.now() - taskStart,
+      };
+    } catch (error) {
+      const errMsg = error instanceof Error ? error.message : String(error);
+      return {
+        id: taskId,
+        success: false,
+        session_id: 'failed',
+        summary: `Failed: ${errMsg}`,
+        error: errMsg,
+        duration_ms: Date.now() - taskStart,
+      };
+    }
+  });
+
+  // Wait for ALL agents to complete
+  const results = await Promise.all(taskPromises);
+
+  const succeeded = results.filter(r => r.success).length;
+  const failed = results.filter(r => !r.success).length;
+  const totalDuration = Date.now() - batchStart;
+
+  console.error(`[Batch:${batchId}] Completed: ${succeeded} succeeded, ${failed} failed in ${totalDuration}ms`);
+
+  return {
+    all_success: failed === 0,
+    succeeded,
+    failed,
+    total_duration_ms: totalDuration,
+    results,
+  };
+}
+
+/**
  * Process SDK message (synchronous for performance)
  */
 function processMessage(
@@ -529,6 +671,22 @@ server.setRequestHandler(CallToolRequestSchema, async (request) => {
         console.error(`[MCP:${requestId}] Starting agent: ${params.agent}`);
         const result = await runAgent(params);
         console.error(`[MCP:${requestId}] Completed in ${Date.now() - requestTime}ms`);
+        return {
+          content: [{ type: 'text', text: JSON.stringify(result, null, 2) }],
+        };
+      }
+
+      case 'run_agents_batch': {
+        const params = args as RunAgentsBatchParams;
+        if (!params.tasks || !Array.isArray(params.tasks) || params.tasks.length === 0) {
+          throw new Error('Missing required parameter: tasks (non-empty array)');
+        }
+        if (params.tasks.length > 10) {
+          throw new Error('Maximum 10 tasks per batch');
+        }
+        console.error(`[MCP:${requestId}] Starting batch of ${params.tasks.length} agents`);
+        const result = await runAgentsBatch(params);
+        console.error(`[MCP:${requestId}] Batch completed in ${Date.now() - requestTime}ms`);
         return {
           content: [{ type: 'text', text: JSON.stringify(result, null, 2) }],
         };

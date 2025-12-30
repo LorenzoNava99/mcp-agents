@@ -103,6 +103,66 @@ export const CancelAgentParamsSchema = z.object({
 
 export type CancelAgentParams = z.infer<typeof CancelAgentParamsSchema>;
 
+/**
+ * Single task in a batch request
+ */
+export const BatchTaskSchema = z.object({
+  /** Name of the agent from the registry */
+  agent: z.string().describe('Name of the agent to run'),
+  /** Task prompt for the agent to execute */
+  task: z.string().describe('Task prompt for the agent'),
+  /** Optional identifier for this task in results */
+  id: z.string().optional().describe('Optional ID to identify this task in results'),
+});
+
+export type BatchTask = z.infer<typeof BatchTaskSchema>;
+
+/**
+ * Parameters for the run_agents_batch tool
+ */
+export const RunAgentsBatchParamsSchema = z.object({
+  /** Array of tasks to run in parallel */
+  tasks: z.array(BatchTaskSchema).min(1).max(10).describe('Array of agent tasks to run in parallel (1-10)'),
+});
+
+export type RunAgentsBatchParams = z.infer<typeof RunAgentsBatchParamsSchema>;
+
+/**
+ * Result for a single task in batch
+ */
+export interface BatchTaskResult {
+  /** Task identifier (from input or auto-generated) */
+  id: string;
+  /** Whether this task completed successfully */
+  success: boolean;
+  /** Session ID for this task */
+  session_id: string;
+  /** Agent's response/summary */
+  summary: string;
+  /** Files created or modified */
+  artifacts?: string[];
+  /** Error message if failed */
+  error?: string;
+  /** Execution time in ms */
+  duration_ms: number;
+}
+
+/**
+ * Result for batch execution
+ */
+export interface BatchResult {
+  /** Whether all tasks succeeded */
+  all_success: boolean;
+  /** Number of successful tasks */
+  succeeded: number;
+  /** Number of failed tasks */
+  failed: number;
+  /** Total execution time in ms */
+  total_duration_ms: number;
+  /** Individual task results */
+  results: BatchTaskResult[];
+}
+
 // ============================================================================
 // MCP Tool Response Types
 // ============================================================================
